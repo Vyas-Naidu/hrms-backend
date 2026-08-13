@@ -1,7 +1,6 @@
 import { diskStorage, memoryStorage } from 'multer';
 import { MulterOptions } from '@nestjs/platform-express/multer/interfaces/multer-options.interface';
 
-
 // =====================================================
 // EXISTING CONFIG
 // Used by the current Employee API
@@ -19,8 +18,6 @@ export const multerConfig: MulterOptions = {
     },
   }),
 };
-
-
 // =====================================================
 // NEW CONFIG
 // Used by Employee Test API

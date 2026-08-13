@@ -3,10 +3,11 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
+
 import { DbService } from '../db/db.service';
 import { PoolClient } from 'pg';
 import { Express } from 'express';
-
+import { validateUploadedFile } from '../common/file-validation';
 import {
   DOCUMENT_DEFINITIONS,
   DocumentKey,
@@ -74,7 +75,11 @@ export class EmployeeService {
     personalInfo: any,
     addresses: any,
     documents: any[],
-    files: Express.Multer.File[],
+    files: Array<
+      Express.Multer.File & {
+        fieldName: string;
+      }
+    >,
   ) {
     const client = await this.dbService.getClient();
 
@@ -185,24 +190,24 @@ export class EmployeeService {
 
       await client.query(
         `
-  INSERT INTO employee_personal_info (
-    employee_id,
-    father_name,
-    father_aadhaar_number,
-    mother_name,
-    mother_aadhaar_number,
-    marital_status,
-    nationality,
-    blood_group,
-    emergency_contact_name,
-    emergency_contact_number,
-    emergency_contact_relation
-  )
-  VALUES (
-    $1, $2, $3, $4, $5,
-    $6, $7, $8, $9, $10, $11
-  );
-  `,
+        INSERT INTO employee_personal_info (
+          employee_id,
+          father_name,
+          father_aadhaar_number,
+          mother_name,
+          mother_aadhaar_number,
+          marital_status,
+          nationality,
+          blood_group,
+          emergency_contact_name,
+          emergency_contact_number,
+          emergency_contact_relation
+        )
+        VALUES (
+          $1, $2, $3, $4, $5,
+          $6, $7, $8, $9, $10, $11
+        );
+        `,
         [
           employeeId,
 
@@ -221,8 +226,7 @@ export class EmployeeService {
           personalInfo.emergencyContactRelation,
         ],
       );
-      console.log('========== PERSONAL INFO ==========');
-console.log(personalInfo);
+
       // ===========================
       // INSERT CURRENT ADDRESS
       // ===========================
@@ -306,20 +310,127 @@ console.log(personalInfo);
       }
 
       // Metadata count must match uploaded files count
-
       if (documents.length !== files.length) {
         throw new BadRequestException(
           'Documents metadata count must match files count',
         );
       }
-
       // ===========================
-      // RESUME VALIDATION
+      // DOCUMENT BUSINESS VALIDATION
       // ===========================
 
-      const resumeCount = documents.filter(
-        (document) => document.documentKey === 'RESUME',
-      ).length;
+      // 1. Validate document keys and filenames.
+      for (const document of documents) {
+        const documentKey = document.documentKey as DocumentKey;
+        const definition = DOCUMENT_DEFINITIONS[documentKey];
+
+        if (!definition) {
+          throw new BadRequestException(
+            `Invalid document key: ${document.documentKey}`,
+          );
+        }
+
+        if (!document.fileName) {
+          throw new BadRequestException(
+            `File name is required for ${document.documentKey}`,
+          );
+        }
+      }
+
+      // 2. Build the uploaded document-key list.
+      const documentKeys = documents.map(
+        (document) => document.documentKey as DocumentKey,
+      );
+
+      const hasDocument = (key: DocumentKey) => documentKeys.includes(key);
+
+      // 3. Required documents.
+      const requiredDocuments: DocumentKey[] = [
+        'PROFILE_PHOTO',
+        'AADHAAR',
+        'PAN',
+        'TENTH',
+        'DEGREE',
+        'RESUME',
+      ];
+
+      for (const key of requiredDocuments) {
+        if (!hasDocument(key)) {
+          throw new BadRequestException(
+            `${DOCUMENT_DEFINITIONS[key].name} is required`,
+          );
+        }
+      }
+
+      // 4. Education path.
+      //
+      // Valid:
+      //   10th → Intermediate → Degree
+      //   10th → Diploma → Degree
+      //
+      // Invalid:
+      //   Intermediate + Diploma
+      //   Neither Intermediate nor Diploma
+      //
+      // Degree is mandatory for this registration flow.
+      const hasIntermediate = hasDocument('INTERMEDIATE');
+      const hasDiploma = hasDocument('DIPLOMA');
+
+      if (hasIntermediate && hasDiploma) {
+        throw new BadRequestException(
+          'Employee cannot have both Intermediate and Diploma certificates',
+        );
+      }
+
+      if (!hasIntermediate && !hasDiploma) {
+        throw new BadRequestException(
+          'Either Intermediate or Diploma certificate is required',
+        );
+      }
+
+      // 5. Optional documents.
+      //
+      // PG, Driving License and Experience are optional.
+      // If supplied, they are stored.
+      // EXPERIENCE may contain multiple files.
+
+      // 6. Prevent duplicates for single-instance documents.
+      const documentKeyCounts = documents.reduce(
+        (counts, document) => {
+          const key = document.documentKey as DocumentKey;
+
+          counts[key] = (counts[key] ?? 0) + 1;
+
+          return counts;
+        },
+        {} as Record<string, number>,
+      );
+
+      const singleDocumentKeys: DocumentKey[] = [
+        'PROFILE_PHOTO',
+        'AADHAAR',
+        'PAN',
+        'DRIVING_LICENSE',
+        'TENTH',
+        'INTERMEDIATE',
+        'DIPLOMA',
+        'DEGREE',
+        'PG',
+        'RESUME',
+      ];
+
+      for (const key of singleDocumentKeys) {
+        if ((documentKeyCounts[key] ?? 0) > 1) {
+          throw new BadRequestException(
+            `Only one ${DOCUMENT_DEFINITIONS[key].name} is allowed`,
+          );
+        }
+      }
+
+      // 7. Explicit resume rule.
+      // Kept for readability; the duplicate check above already
+      // guarantees that only one resume can be uploaded.
+      const resumeCount = documentKeyCounts.RESUME ?? 0;
 
       if (resumeCount > 1) {
         throw new BadRequestException(
@@ -331,13 +442,12 @@ console.log(personalInfo);
       // INSERT DOCUMENTS
       // ===========================
 
-      for (const document of documents) {
+      for (const [index, document] of documents.entries()) {
         const documentKey = document.documentKey as DocumentKey;
 
         const definition = DOCUMENT_DEFINITIONS[documentKey];
 
         // Validate document key
-
         if (!definition) {
           throw new BadRequestException(
             `Invalid document key: ${document.documentKey}`,
@@ -345,50 +455,50 @@ console.log(personalInfo);
         }
 
         // Validate filename
-
         if (!document.fileName) {
           throw new BadRequestException(
             `File name is required for ${document.documentKey}`,
           );
         }
 
-        // Find corresponding uploaded file
-
-        const file = files.find(
-          (uploadedFile) =>
-            uploadedFile.originalname.toLowerCase() ===
-            document.fileName.toLowerCase(),
-        );
+        // Match metadata and uploaded file by position.
+        const file = files[index];
 
         if (!file) {
           throw new BadRequestException(
             `Uploaded file not found for ${document.fileName}`,
           );
         }
+        // ===========================
+        // FILE VALIDATION
+        // ===========================
 
+        validateUploadedFile(file, documentKey);
         // ===========================
         // INSERT DOCUMENT RECORD
         // ===========================
 
         await client.query(
           `
-  INSERT INTO employee_documents (
-    employee_id,
-    document_name,
-    document_type,
-    original_file_name,
-    file_path
-  )
-  VALUES (
-    $1, $2, $3, $4, $5
-  );
-  `,
+          INSERT INTO employee_documents (
+            employee_id,
+            document_name,
+            document_type,
+            original_file_name,
+            mime_type,
+            file_data
+          )
+          VALUES (
+            $1, $2, $3, $4, $5, $6
+          );
+          `,
           [
             employeeId,
             definition.name,
             definition.type,
             file.originalname,
-            file.path,
+            file.mimetype,
+            file.buffer,
           ],
         );
       }
@@ -478,10 +588,10 @@ console.log(personalInfo);
 
     const employeeResult = await this.dbService.query(
       `
-        SELECT *
-        FROM employees
-        WHERE id = $1;
-        `,
+      SELECT *
+      FROM employees
+      WHERE id = $1;
+      `,
       [id],
     );
 
@@ -517,23 +627,23 @@ console.log(personalInfo);
 
     const result = await this.dbService.query(
       `
-        UPDATE employees
-        SET
-          first_name = $1,
-          last_name = $2,
-          email = $3,
-          phone = $4,
-          gender = $5,
-          dob = $6,
-          joining_date = $7,
-          department_id = $8,
-          designation_id = $9,
-          manager_id = $10,
-          employment_type = $11,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = $12
-        RETURNING *;
-        `,
+      UPDATE employees
+      SET
+        first_name = $1,
+        last_name = $2,
+        email = $3,
+        phone = $4,
+        gender = $5,
+        dob = $6,
+        joining_date = $7,
+        department_id = $8,
+        designation_id = $9,
+        manager_id = $10,
+        employment_type = $11,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $12
+      RETURNING *;
+      `,
       [
         firstName,
         lastName,
@@ -549,7 +659,6 @@ console.log(personalInfo);
         id,
       ],
     );
-
     return result.rows[0];
   }
 

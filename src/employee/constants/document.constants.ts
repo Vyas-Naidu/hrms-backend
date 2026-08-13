@@ -1,4 +1,9 @@
 export const DOCUMENT_DEFINITIONS = {
+  PROFILE_PHOTO: {
+    name: 'Profile Photo',
+    type: 'Profile',
+  },
+
   AADHAAR: {
     name: 'Aadhaar Card',
     type: 'Identity',
@@ -6,11 +11,6 @@ export const DOCUMENT_DEFINITIONS = {
 
   PAN: {
     name: 'PAN Card',
-    type: 'Identity',
-  },
-
-  PASSPORT: {
-    name: 'Passport',
     type: 'Identity',
   },
 
