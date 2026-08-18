@@ -1,11 +1,15 @@
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Pool, QueryResult, PoolClient } from 'pg';
+import { Pool, PoolClient, QueryResult, types } from 'pg';
 
+// PostgreSQL DATE (OID 1082) should remain a date-only string.
+// This prevents timezone conversion such as:
+// "2001-07-20" -> "2001-07-19T18:30:00.000Z"
+types.setTypeParser(1082, (value) => value);
 
 @Injectable()
 export class DbService implements OnModuleInit, OnModuleDestroy {
-  private pool: Pool;
+  private readonly pool: Pool;
 
   constructor(private readonly configService: ConfigService) {
     this.pool = new Pool({
@@ -32,9 +36,10 @@ export class DbService implements OnModuleInit, OnModuleDestroy {
   async query(sql: string, params: any[] = []): Promise<QueryResult> {
     return this.pool.query(sql, params);
   }
+
   async getClient(): Promise<PoolClient> {
-  return this.pool.connect();
-}
+    return this.pool.connect();
+  }
 
   async onModuleDestroy() {
     await this.pool.end();

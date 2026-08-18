@@ -3,10 +3,14 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-
 import { DbService } from '../db/db.service';
 import { PoolClient } from 'pg';
-import { Express } from 'express';
+import {
+  EmployeeUploadedFiles,
+  matchDocumentFiles,
+  validateDocumentMetadata,
+  validateSingleDocumentDuplicates,
+} from '../common/document-upload';
 import { validateUploadedFile } from '../common/file-validation';
 import {
   DOCUMENT_DEFINITIONS,
@@ -74,25 +78,19 @@ export class EmployeeService {
     employeeData: any,
     personalInfo: any,
     addresses: any,
-    documents: any[],
-    files: Array<
-      Express.Multer.File & {
-        fieldName: string;
-      }
-    >,
+    documents: unknown,
+    files: EmployeeUploadedFiles,
   ) {
+    const normalizedEmployee = this.normalizeEmployeeData(employeeData);
+
     const client = await this.dbService.getClient();
 
     try {
-      // ===========================
-      // START TRANSACTION
-      // ===========================
-
       await client.query('BEGIN');
 
-      // ===========================
-      // DEPARTMENT VALIDATION
-      // ===========================
+      // ---------------------------
+      // Validate department
+      // ---------------------------
 
       const departmentResult = await client.query(
         `
@@ -100,16 +98,16 @@ export class EmployeeService {
         FROM departments
         WHERE id = $1;
         `,
-        [employeeData.departmentId],
+        [normalizedEmployee.departmentId],
       );
 
       if (departmentResult.rows.length === 0) {
         throw new NotFoundException('Department not found');
       }
 
-      // ===========================
-      // DESIGNATION VALIDATION
-      // ===========================
+      // ---------------------------
+      // Validate designation
+      // ---------------------------
 
       const designationResult = await client.query(
         `
@@ -117,27 +115,25 @@ export class EmployeeService {
         FROM designations
         WHERE id = $1;
         `,
-        [employeeData.designationId],
+        [normalizedEmployee.designationId],
       );
 
       if (designationResult.rows.length === 0) {
         throw new NotFoundException('Designation not found');
       }
 
-      // ===========================
-      // GENERATE EMPLOYEE CODE
-      // ===========================
-
-      const departmentCode = departmentResult.rows[0].department_code;
+      // ---------------------------
+      // Generate employee code
+      // ---------------------------
 
       const employeeCode = await this.generateEmployeeCode(
         client,
-        departmentCode,
+        departmentResult.rows[0].department_code,
       );
 
-      // ===========================
-      // INSERT EMPLOYEE
-      // ===========================
+      // ---------------------------
+      // Create employee
+      // ---------------------------
 
       const employeeResult = await client.query(
         `
@@ -158,35 +154,34 @@ export class EmployeeService {
           status
         )
         VALUES (
-          $1, $2, $3, $4, $5,
-          $6, $7, $8, $9, $10,
-          $11, $12, $13, $14
+          $1, $2, $3, $4, $5, $6, $7,
+          $8, $9, $10, $11, $12, $13, $14
         )
         RETURNING id, employee_code;
         `,
         [
           employeeCode,
-          employeeData.firstName,
-          employeeData.lastName,
-          employeeData.email,
-          employeeData.phone,
-          employeeData.gender,
-          employeeData.dob,
-          employeeData.joiningDate,
-          employeeData.departmentId,
-          employeeData.designationId,
-          employeeData.managerId,
-          employeeData.employmentType,
-          employeeData.workLocation,
-          employeeData.status ?? 'Active',
+          normalizedEmployee.firstName,
+          normalizedEmployee.lastName,
+          normalizedEmployee.email,
+          normalizedEmployee.phone,
+          normalizedEmployee.gender,
+          normalizedEmployee.dob,
+          normalizedEmployee.joiningDate,
+          normalizedEmployee.departmentId,
+          normalizedEmployee.designationId,
+          normalizedEmployee.managerId,
+          normalizedEmployee.employmentType,
+          normalizedEmployee.workLocation,
+          normalizedEmployee.status ?? 'Active',
         ],
       );
 
       const employeeId = employeeResult.rows[0].id;
 
-      // ===========================
-      // INSERT PERSONAL INFORMATION
-      // ===========================
+      // ---------------------------
+      // Personal information
+      // ---------------------------
 
       await client.query(
         `
@@ -210,28 +205,29 @@ export class EmployeeService {
         `,
         [
           employeeId,
-
-          personalInfo.fatherName,
-          personalInfo.fatherAadhaarNumber,
-
-          personalInfo.motherName,
-          personalInfo.motherAadhaarNumber,
-
-          personalInfo.maritalStatus,
-          personalInfo.nationality,
-          personalInfo.bloodGroup,
-
-          personalInfo.emergencyContactName,
-          personalInfo.emergencyContactNumber,
-          personalInfo.emergencyContactRelation,
+          personalInfo?.fatherName,
+          personalInfo?.fatherAadhaarNumber,
+          personalInfo?.motherName,
+          personalInfo?.motherAadhaarNumber,
+          personalInfo?.maritalStatus,
+          personalInfo?.nationality,
+          personalInfo?.bloodGroup,
+          personalInfo?.emergencyContactName,
+          personalInfo?.emergencyContactNumber,
+          personalInfo?.emergencyContactRelation,
         ],
       );
 
-      // ===========================
-      // INSERT CURRENT ADDRESS
-      // ===========================
+      // ---------------------------
+      // Address validation
+      // ---------------------------
 
-      const currentAddress = addresses.currentAddress;
+      const { currentAddress, permanentAddress } =
+        this.resolveAddresses(addresses);
+
+      // ---------------------------
+      // Current address
+      // ---------------------------
 
       await client.query(
         `
@@ -245,9 +241,7 @@ export class EmployeeService {
           pincode,
           country
         )
-        VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8
-        );
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
         `,
         [
           employeeId,
@@ -261,13 +255,9 @@ export class EmployeeService {
         ],
       );
 
-      // ===========================
-      // INSERT PERMANENT ADDRESS
-      // ===========================
-
-      const permanentAddress = addresses.sameAsCurrentAddress
-        ? currentAddress
-        : addresses.permanentAddress;
+      // ---------------------------
+      // Permanent address
+      // ---------------------------
 
       await client.query(
         `
@@ -281,9 +271,7 @@ export class EmployeeService {
           pincode,
           country
         )
-        VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8
-        );
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
         `,
         [
           employeeId,
@@ -301,50 +289,26 @@ export class EmployeeService {
       // DOCUMENT VALIDATION
       // ===========================
 
-      if (!Array.isArray(documents)) {
-        throw new BadRequestException('Documents metadata must be an array');
-      }
+      validateDocumentMetadata(documents);
 
-      if (!Array.isArray(files)) {
-        throw new BadRequestException('Document files must be an array');
-      }
-
-      // Metadata count must match uploaded files count
-      if (documents.length !== files.length) {
+      if (documents.length === 0) {
         throw new BadRequestException(
-          'Documents metadata count must match files count',
+          'Employee registration requires documents',
         );
       }
-      // ===========================
-      // DOCUMENT BUSINESS VALIDATION
-      // ===========================
 
-      // 1. Validate document keys and filenames.
-      for (const document of documents) {
-        const documentKey = document.documentKey as DocumentKey;
-        const definition = DOCUMENT_DEFINITIONS[documentKey];
+      validateSingleDocumentDuplicates(documents);
 
-        if (!definition) {
-          throw new BadRequestException(
-            `Invalid document key: ${document.documentKey}`,
-          );
-        }
-
-        if (!document.fileName) {
-          throw new BadRequestException(
-            `File name is required for ${document.documentKey}`,
-          );
-        }
-      }
-
-      // 2. Build the uploaded document-key list.
       const documentKeys = documents.map(
         (document) => document.documentKey as DocumentKey,
       );
 
       const hasDocument = (key: DocumentKey) => documentKeys.includes(key);
 
-      // 3. Required documents.
+      // ---------------------------
+      // Required documents
+      // ---------------------------
+
       const requiredDocuments: DocumentKey[] = [
         'PROFILE_PHOTO',
         'AADHAAR',
@@ -362,17 +326,10 @@ export class EmployeeService {
         }
       }
 
-      // 4. Education path.
-      //
-      // Valid:
-      //   10th → Intermediate → Degree
-      //   10th → Diploma → Degree
-      //
-      // Invalid:
-      //   Intermediate + Diploma
-      //   Neither Intermediate nor Diploma
-      //
-      // Degree is mandatory for this registration flow.
+      // ---------------------------
+      // Education path
+      // ---------------------------
+
       const hasIntermediate = hasDocument('INTERMEDIATE');
       const hasDiploma = hasDocument('DIPLOMA');
 
@@ -388,95 +345,20 @@ export class EmployeeService {
         );
       }
 
-      // 5. Optional documents.
-      //
-      // PG, Driving License and Experience are optional.
-      // If supplied, they are stored.
-      // EXPERIENCE may contain multiple files.
+      // ---------------------------
+      // Match files to metadata
+      // ---------------------------
 
-      // 6. Prevent duplicates for single-instance documents.
-      const documentKeyCounts = documents.reduce(
-        (counts, document) => {
-          const key = document.documentKey as DocumentKey;
+      const matchedFiles = matchDocumentFiles(documents, files ?? {});
 
-          counts[key] = (counts[key] ?? 0) + 1;
+      // ---------------------------
+      // Validate and store files
+      // ---------------------------
 
-          return counts;
-        },
-        {} as Record<string, number>,
-      );
+      for (const { document, file } of matchedFiles) {
+        validateUploadedFile(file, document.documentKey);
 
-      const singleDocumentKeys: DocumentKey[] = [
-        'PROFILE_PHOTO',
-        'AADHAAR',
-        'PAN',
-        'DRIVING_LICENSE',
-        'TENTH',
-        'INTERMEDIATE',
-        'DIPLOMA',
-        'DEGREE',
-        'PG',
-        'RESUME',
-      ];
-
-      for (const key of singleDocumentKeys) {
-        if ((documentKeyCounts[key] ?? 0) > 1) {
-          throw new BadRequestException(
-            `Only one ${DOCUMENT_DEFINITIONS[key].name} is allowed`,
-          );
-        }
-      }
-
-      // 7. Explicit resume rule.
-      // Kept for readability; the duplicate check above already
-      // guarantees that only one resume can be uploaded.
-      const resumeCount = documentKeyCounts.RESUME ?? 0;
-
-      if (resumeCount > 1) {
-        throw new BadRequestException(
-          'Only one resume is allowed per employee',
-        );
-      }
-
-      // ===========================
-      // INSERT DOCUMENTS
-      // ===========================
-
-      for (const [index, document] of documents.entries()) {
-        const documentKey = document.documentKey as DocumentKey;
-
-        const definition = DOCUMENT_DEFINITIONS[documentKey];
-
-        // Validate document key
-        if (!definition) {
-          throw new BadRequestException(
-            `Invalid document key: ${document.documentKey}`,
-          );
-        }
-
-        // Validate filename
-        if (!document.fileName) {
-          throw new BadRequestException(
-            `File name is required for ${document.documentKey}`,
-          );
-        }
-
-        // Match metadata and uploaded file by position.
-        const file = files[index];
-
-        if (!file) {
-          throw new BadRequestException(
-            `Uploaded file not found for ${document.fileName}`,
-          );
-        }
-        // ===========================
-        // FILE VALIDATION
-        // ===========================
-
-        validateUploadedFile(file, documentKey);
-        // ===========================
-        // INSERT DOCUMENT RECORD
-        // ===========================
+        const definition = DOCUMENT_DEFINITIONS[document.documentKey];
 
         await client.query(
           `
@@ -488,9 +370,7 @@ export class EmployeeService {
             mime_type,
             file_data
           )
-          VALUES (
-            $1, $2, $3, $4, $5, $6
-          );
+          VALUES ($1, $2, $3, $4, $5, $6);
           `,
           [
             employeeId,
@@ -503,10 +383,6 @@ export class EmployeeService {
         );
       }
 
-      // ===========================
-      // COMMIT TRANSACTION
-      // ===========================
-
       await client.query('COMMIT');
 
       return {
@@ -515,18 +391,9 @@ export class EmployeeService {
         employeeCode: employeeResult.rows[0].employee_code,
       };
     } catch (error) {
-      // ===========================
-      // ROLLBACK TRANSACTION
-      // ===========================
-
       await client.query('ROLLBACK');
-
       throw error;
     } finally {
-      // ===========================
-      // RELEASE DATABASE CONNECTION
-      // ===========================
-
       client.release();
     }
   }
@@ -556,10 +423,11 @@ export class EmployeeService {
 
     if (employeeResult.rows.length > 0) {
       const lastEmployeeCode = employeeResult.rows[0].employee_code;
-
       const lastSequence = Number(lastEmployeeCode.split('-')[2]);
 
-      sequenceNumber = lastSequence + 1;
+      if (!Number.isNaN(lastSequence)) {
+        sequenceNumber = lastSequence + 1;
+      }
     }
 
     const formattedSequence = sequenceNumber.toString().padStart(4, '0');
@@ -572,21 +440,8 @@ export class EmployeeService {
   // ===========================
 
   async update(id: string, employee: any) {
-    const {
-      firstName,
-      lastName,
-      email,
-      phone,
-      gender,
-      dob,
-      joiningDate,
-      departmentId,
-      designationId,
-      managerId,
-      employmentType,
-    } = employee;
-
-    const employeeResult = await this.dbService.query(
+    // First fetch the existing employee.
+    const existingResult = await this.dbService.query(
       `
       SELECT *
       FROM employees
@@ -595,37 +450,59 @@ export class EmployeeService {
       [id],
     );
 
-    if (employeeResult.rows.length === 0) {
+    if (existingResult.rows.length === 0) {
       throw new NotFoundException('Employee not found');
     }
 
+    const existing = existingResult.rows[0];
+
+    // Accept both:
+    //
+    // departmentId
+    // department_id
+    //
+    // and the same pattern for other fields.
+    const normalizedEmployee = this.normalizeEmployeeData(employee, existing);
+
+    // ---------------------------
+    // Validate department
+    // ---------------------------
+
     const departmentResult = await this.dbService.query(
       `
-        SELECT *
-        FROM departments
-        WHERE id = $1;
-        `,
-      [departmentId],
+      SELECT *
+      FROM departments
+      WHERE id = $1;
+      `,
+      [normalizedEmployee.departmentId],
     );
 
     if (departmentResult.rows.length === 0) {
       throw new NotFoundException('Department not found');
     }
 
+    // ---------------------------
+    // Validate designation
+    // ---------------------------
+
     const designationResult = await this.dbService.query(
       `
-        SELECT *
-        FROM designations
-        WHERE id = $1;
-        `,
-      [designationId],
+      SELECT *
+      FROM designations
+      WHERE id = $1;
+      `,
+      [normalizedEmployee.designationId],
     );
 
     if (designationResult.rows.length === 0) {
       throw new NotFoundException('Designation not found');
     }
 
-    const result = await this.dbService.query(
+    // ---------------------------
+    // Update employee
+    // ---------------------------
+
+    await this.dbService.query(
       `
       UPDATE employees
       SET
@@ -640,26 +517,47 @@ export class EmployeeService {
         designation_id = $9,
         manager_id = $10,
         employment_type = $11,
+        work_location = $12,
+        status = COALESCE($13, status),
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $12
-      RETURNING *;
+      WHERE id = $14;
       `,
       [
-        firstName,
-        lastName,
-        email,
-        phone,
-        gender,
-        dob,
-        joiningDate,
-        departmentId,
-        designationId,
-        managerId,
-        employmentType,
+        normalizedEmployee.firstName,
+        normalizedEmployee.lastName,
+        normalizedEmployee.email,
+        normalizedEmployee.phone,
+        normalizedEmployee.gender,
+        normalizedEmployee.dob,
+        normalizedEmployee.joiningDate,
+        normalizedEmployee.departmentId,
+        normalizedEmployee.designationId,
+        normalizedEmployee.managerId,
+        normalizedEmployee.employmentType,
+        normalizedEmployee.workLocation,
+        normalizedEmployee.status,
         id,
       ],
     );
-    return result.rows[0];
+
+    // Return the same relationship information that GET returns.
+    const updatedResult = await this.dbService.query(
+      `
+      SELECT
+        e.*,
+        d.department_name,
+        dg.designation_name
+      FROM employees e
+      LEFT JOIN departments d
+        ON e.department_id = d.id
+      LEFT JOIN designations dg
+        ON e.designation_id = dg.id
+      WHERE e.id = $1;
+      `,
+      [id],
+    );
+
+    return updatedResult.rows[0];
   }
 
   // ===========================
@@ -669,10 +567,10 @@ export class EmployeeService {
   async remove(id: string) {
     const employeeResult = await this.dbService.query(
       `
-        SELECT *
-        FROM employees
-        WHERE id = $1;
-        `,
+      SELECT *
+      FROM employees
+      WHERE id = $1;
+      `,
       [id],
     );
 
@@ -691,5 +589,158 @@ export class EmployeeService {
     return {
       message: 'Employee deleted successfully',
     };
+  }
+
+  // ===========================
+  // NORMALIZE EMPLOYEE DATA
+  // ===========================
+
+  private normalizeEmployeeData(employee: any, existing: any = {}) {
+    const source = employee ?? {};
+
+    return {
+      firstName: source.firstName ?? source.first_name ?? existing.first_name,
+
+      lastName: source.lastName ?? source.last_name ?? existing.last_name,
+
+      email: source.email ?? existing.email,
+
+      phone: source.phone ?? existing.phone,
+
+      gender: source.gender ?? existing.gender,
+
+      dob: this.normalizeDate(source.dob ?? existing.dob),
+
+      joiningDate: this.normalizeDate(
+        source.joiningDate ?? source.joining_date ?? existing.joining_date,
+      ),
+
+      departmentId:
+        source.departmentId ?? source.department_id ?? existing.department_id,
+
+      designationId:
+        source.designationId ??
+        source.designation_id ??
+        existing.designation_id,
+
+      managerId:
+        source.managerId ?? source.manager_id ?? existing.manager_id ?? null,
+
+      employmentType:
+        source.employmentType ??
+        source.employment_type ??
+        existing.employment_type,
+
+      workLocation:
+        source.workLocation ?? source.work_location ?? existing.work_location,
+
+      status: source.status ?? existing.status ?? 'Active',
+    };
+  }
+
+  // ===========================
+  // DATE NORMALIZATION
+  // ===========================
+
+  private normalizeDate(value: unknown): string | null {
+    if (value === null || value === undefined || value === '') {
+      return null;
+    }
+
+    if (value instanceof Date) {
+      return value.toISOString().slice(0, 10);
+    }
+
+    if (typeof value !== 'string') {
+      return String(value);
+    }
+
+    // Preserve API date-only values exactly.
+    //
+    // Example:
+    // "2001-07-21"
+    // remains
+    // "2001-07-21"
+    //
+    // This prevents an unnecessary timezone conversion.
+    const dateOnlyMatch = value.match(/^(\d{4}-\d{2}-\d{2})$/);
+
+    if (dateOnlyMatch) {
+      return dateOnlyMatch[1];
+    }
+
+    // If an ISO timestamp is received, extract the date
+    // portion instead of converting it through local timezone.
+    const isoDateMatch = value.match(/^(\d{4}-\d{2}-\d{2})T/);
+
+    if (isoDateMatch) {
+      return isoDateMatch[1];
+    }
+
+    return value;
+  }
+
+  // ===========================
+  // ADDRESS RESOLUTION
+  // ===========================
+
+  private resolveAddresses(addresses: any) {
+    if (!addresses || typeof addresses !== 'object') {
+      throw new BadRequestException('Addresses information is required');
+    }
+
+    const currentAddress = addresses.currentAddress;
+
+    if (!currentAddress || typeof currentAddress !== 'object') {
+      throw new BadRequestException('Current address is required');
+    }
+
+    const sameAsCurrentAddress = addresses.sameAsCurrentAddress === true;
+
+    const permanentAddress = sameAsCurrentAddress
+      ? currentAddress
+      : addresses.permanentAddress;
+
+    if (!permanentAddress || typeof permanentAddress !== 'object') {
+      throw new BadRequestException(
+        'Permanent address is required when sameAsCurrentAddress is false',
+      );
+    }
+
+    this.validateAddressFields(currentAddress, 'Current address');
+
+    this.validateAddressFields(permanentAddress, 'Permanent address');
+
+    return {
+      currentAddress,
+      permanentAddress,
+    };
+  }
+
+  // ===========================
+  // ADDRESS FIELD VALIDATION
+  // ===========================
+
+  private validateAddressFields(address: any, addressLabel: string) {
+    const requiredFields = [
+      'houseNo',
+      'street',
+      'city',
+      'state',
+      'pincode',
+      'country',
+    ];
+
+    for (const field of requiredFields) {
+      const value = address?.[field];
+
+      if (
+        value === undefined ||
+        value === null ||
+        String(value).trim() === ''
+      ) {
+        throw new BadRequestException(`${addressLabel} ${field} is required`);
+      }
+    }
   }
 }

@@ -1,39 +1,40 @@
 import {
   Body,
   Controller,
-  Post,
+  Delete,
   Get,
   Param,
+  Post,
   Put,
-  Delete,
 } from '@nestjs/common';
 import { DepartmentService } from './department.service';
 
-@Controller('department')
+@Controller('departments')
 export class DepartmentController {
   constructor(private readonly departmentService: DepartmentService) {}
 
   @Post()
-  async create(@Body() body: any) {
-    const result = await this.departmentService.create(body);
-
-    return result;
+  create(@Body() body: any) {
+    return this.departmentService.create(body);
   }
+
   @Get()
-  async findAll() {
-    return await this.departmentService.findAll();
+  findAll() {
+    return this.departmentService.findAll();
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: string) {
-    return await this.departmentService.findOne(id);
+  findOne(@Param('id') id: string) {
+    return this.departmentService.findOne(id);
   }
+
   @Put(':id')
-  async update(@Param('id') id: string, @Body() body: any) {
-    return await this.departmentService.update(id, body);
+  update(@Param('id') id: string, @Body() body: any) {
+    return this.departmentService.update(id, body);
   }
+
   @Delete(':id')
-  async remove(@Param('id') id: string) {
-    return await this.departmentService.remove(id);
+  remove(@Param('id') id: string) {
+    return this.departmentService.remove(id);
   }
 }

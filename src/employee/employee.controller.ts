@@ -1,45 +1,34 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
   Get,
   Param,
+  ParseIntPipe,
   Post,
   Put,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
-
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
-
 import { EmployeeService } from './employee.service';
 import { multerMemoryConfig } from '../common/multer.config';
+import type { EmployeeUploadedFiles } from '../common/document-upload';
 
-@Controller('employee')
+@Controller('employees')
 export class EmployeeController {
   constructor(private readonly employeeService: EmployeeService) {}
-
-  // =====================================================
-  // GET ALL EMPLOYEES
-  // =====================================================
 
   @Get()
   findAll() {
     return this.employeeService.findAll();
   }
 
-  // =====================================================
-  // GET EMPLOYEE BY ID
-  // =====================================================
-
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.employeeService.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number) {
+    return this.employeeService.findOne(String(id));
   }
-
-  // =====================================================
-  // CREATE EMPLOYEE
-  // =====================================================
 
   @Post()
   @UseInterceptors(
@@ -49,13 +38,8 @@ export class EmployeeController {
         { name: 'aadhaar', maxCount: 1 },
         { name: 'pan', maxCount: 1 },
         { name: 'drivingLicense', maxCount: 1 },
-
-        // Multiple education documents
         { name: 'education', maxCount: 10 },
-
-        // Multiple experience documents
         { name: 'experience', maxCount: 10 },
-
         { name: 'resume', maxCount: 1 },
       ],
       multerMemoryConfig,
@@ -63,71 +47,34 @@ export class EmployeeController {
   )
   create(
     @Body('employeeData') employeeData: string,
-
     @Body('personalInfo') personalInfo: string,
-
     @Body('addresses') addresses: string,
-
-    @Body('documentsMetadata')
-    documentsMetadata: string,
-
-    @UploadedFiles()
-    files: {
-      profilePhoto?: Express.Multer.File[];
-      aadhaar?: Express.Multer.File[];
-      pan?: Express.Multer.File[];
-      drivingLicense?: Express.Multer.File[];
-      education?: Express.Multer.File[];
-      experience?: Express.Multer.File[];
-      resume?: Express.Multer.File[];
-    },
+    @Body('documentsMetadata') documentsMetadata: string,
+    @UploadedFiles() files: EmployeeUploadedFiles,
   ) {
-    // Multipart/form-data sends JSON fields as strings.
-    const employee = JSON.parse(employeeData);
-    const personal = JSON.parse(personalInfo);
-    const addressData = JSON.parse(addresses);
-    const documents = JSON.parse(documentsMetadata);
-
-    // ===================================================
-    // CONVERT FILE FIELDS INTO ONE ARRAY
-    // ===================================================
-
-    const uploadedFiles = Object.entries(files).flatMap(
-      ([fieldName, fieldFiles]) =>
-        (fieldFiles ?? []).map((file) => ({
-          ...file,
-          fieldName,
-        })),
-    );
-
-    // ===================================================
-    // SEND DATA TO SERVICE
-    // ===================================================
-
-    return this.employeeService.create(
-      employee,
-      personal,
-      addressData,
-      documents,
-      uploadedFiles,
-    );
+    try {
+      return this.employeeService.create(
+        JSON.parse(employeeData),
+        JSON.parse(personalInfo),
+        JSON.parse(addresses),
+        documentsMetadata ? JSON.parse(documentsMetadata) : [],
+        files ?? {},
+      );
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new BadRequestException('Invalid JSON in multipart form data');
+      }
+      throw error;
+    }
   }
-
-  // =====================================================
-  // UPDATE EMPLOYEE
-  // =====================================================
 
   @Put(':id')
-  update(@Param('id') id: string, @Body() employee: any) {
-    return this.employeeService.update(id, employee);
+  update(@Param('id', ParseIntPipe) id: number, @Body() employee: any) {
+    return this.employeeService.update(String(id), employee);
   }
 
-  // =====================================================
-  // DELETE EMPLOYEE
-  // =====================================================
-
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.employeeService.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number) {
+    return this.employeeService.remove(String(id));
   }
 }
