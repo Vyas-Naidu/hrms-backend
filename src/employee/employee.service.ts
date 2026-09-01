@@ -19,7 +19,7 @@ import {
 
 @Injectable()
 export class EmployeeService {
-  constructor(private readonly dbService: DbService) {}
+  constructor(private readonly dbService: DbService) { }
 
   // ===========================
   // GET ALL EMPLOYEES
@@ -27,47 +27,90 @@ export class EmployeeService {
 
   async findAll() {
     const result = await this.dbService.query(`
-      SELECT
-        e.*,
-        d.department_name,
-        dg.designation_name
-      FROM employees e
-      LEFT JOIN departments d
-        ON e.department_id = d.id
-      LEFT JOIN designations dg
-        ON e.designation_id = dg.id
-      ORDER BY e.id;
-    `);
+    SELECT
+      e.*,
+      d.department_name,
+      dg.designation_name
+    FROM employees e
+    LEFT JOIN departments d
+      ON e.department_id = d.id
+    LEFT JOIN designations dg
+      ON e.designation_id = dg.id
+    WHERE e.status <> 'Inactive'
+    ORDER BY e.id;
+  `);
 
     return result.rows;
   }
-
   // ===========================
   // GET EMPLOYEE BY ID
   // ===========================
 
   async findOne(id: string) {
-    const result = await this.dbService.query(
+    const employeeResult = await this.dbService.query(
       `
-      SELECT
-        e.*,
-        d.department_name,
-        dg.designation_name
-      FROM employees e
-      LEFT JOIN departments d
-        ON e.department_id = d.id
-      LEFT JOIN designations dg
-        ON e.designation_id = dg.id
-      WHERE e.id = $1;
-      `,
+    SELECT
+      e.*,
+      d.department_name,
+      dg.designation_name
+    FROM employees e
+    LEFT JOIN departments d
+      ON e.department_id = d.id
+    LEFT JOIN designations dg
+      ON e.designation_id = dg.id
+    WHERE e.id = $1;
+    `,
       [id],
     );
 
-    if (result.rows.length === 0) {
+    if (employeeResult.rows.length === 0) {
       throw new NotFoundException('Employee not found');
     }
 
-    return result.rows[0];
+    const employee = employeeResult.rows[0];
+
+    const personalResult = await this.dbService.query(
+      `
+    SELECT
+      father_name,
+      father_aadhaar_number,
+      mother_name,
+      mother_aadhaar_number,
+      marital_status,
+      nationality,
+      blood_group,
+      emergency_contact_name,
+      emergency_contact_number,
+      emergency_contact_relation
+    FROM employee_personal_info
+    WHERE employee_id = $1;
+    `,
+      [id],
+    );
+
+    const addressResult = await this.dbService.query(
+      `
+    SELECT
+      id,
+      address_type,
+      house_no,
+      street,
+      city,
+      state,
+      pincode,
+      country
+    FROM employee_addresses
+    WHERE employee_id = $1
+    ORDER BY id;
+    `,
+      [id],
+    );
+
+    return {
+      ...employee,
+      personal_info: personalResult.rows[0] ?? null,
+      addresses: addressResult.rows,
+    };
   }
 
   // ===========================
@@ -565,32 +608,29 @@ export class EmployeeService {
   // ===========================
 
   async remove(id: string) {
-    const employeeResult = await this.dbService.query(
+    const result = await this.dbService.query(
       `
-      SELECT *
-      FROM employees
-      WHERE id = $1;
-      `,
+    UPDATE employees
+    SET
+      status = 'Inactive',
+      deleted_at = CURRENT_TIMESTAMP,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = $1
+      AND status <> 'Inactive'
+    RETURNING *;
+    `,
       [id],
     );
 
-    if (employeeResult.rows.length === 0) {
-      throw new NotFoundException('Employee not found');
+    if (result.rows.length === 0) {
+      throw new NotFoundException('Active employee not found');
     }
 
-    await this.dbService.query(
-      `
-      DELETE FROM employees
-      WHERE id = $1;
-      `,
-      [id],
-    );
-
     return {
-      message: 'Employee deleted successfully',
+      message: 'Employee deactivated successfully',
+      employee: result.rows[0],
     };
   }
-
   // ===========================
   // NORMALIZE EMPLOYEE DATA
   // ===========================
