@@ -7,11 +7,14 @@ import {
   Post,
   Put,
 } from '@nestjs/common';
+
 import { DesignationService } from './designation.service';
 
 @Controller('designations')
 export class DesignationController {
-  constructor(private readonly designationService: DesignationService) {}
+  constructor(
+    private readonly designationService: DesignationService,
+  ) {}
 
   @Post()
   create(@Body() body: any) {
@@ -28,8 +31,12 @@ export class DesignationController {
     return this.designationService.findOne(id);
   }
 
+  // PUT
   @Put(':id')
-  update(@Param('id') id: string, @Body() body: any) {
+  update(
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
     return this.designationService.update(id, body);
   }
 

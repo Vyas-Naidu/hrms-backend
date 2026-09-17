@@ -1,4 +1,9 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Pool, PoolClient, QueryResult, types } from 'pg';
 
@@ -10,6 +15,7 @@ types.setTypeParser(1082, (value) => value);
 @Injectable()
 export class DbService implements OnModuleInit, OnModuleDestroy {
   private readonly pool: Pool;
+  private readonly logger = new Logger(DbService.name);
 
   constructor(private readonly configService: ConfigService) {
     this.pool = new Pool({
@@ -25,8 +31,8 @@ export class DbService implements OnModuleInit, OnModuleDestroy {
     try {
       const result = await this.pool.query('SELECT NOW()');
 
-      console.log('✅ Database connected successfully');
-      console.log(result.rows[0]);
+      this.logger.log('Database connected successfully');
+      this.logger.debug(result.rows[0]);
     } catch (error) {
       console.error('❌ Database connection failed');
       console.error(error);
@@ -43,6 +49,6 @@ export class DbService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleDestroy() {
     await this.pool.end();
-    console.log('🔌 Database connection closed');
+    this.logger.log('Database connection closed');
   }
 }

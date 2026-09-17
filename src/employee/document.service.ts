@@ -18,7 +18,7 @@ import { validateUploadedFile } from '../common/file-validation';
 
 @Injectable()
 export class DocumentService {
-  constructor(private readonly dbService: DbService) {}
+  constructor(private readonly dbService: DbService) { }
 
   async upload(
     employeeId: number,
@@ -57,6 +57,23 @@ export class DocumentService {
 
       for (const { document, file } of matches) {
         const definition = DOCUMENT_DEFINITIONS[document.documentKey];
+
+        // Replace existing profile photo
+        if (document.documentKey === 'PROFILE_PHOTO') {
+          await client.query(
+            `
+    DELETE FROM employee_documents
+    WHERE employee_id = $1
+      AND (
+        document_name = 'Profile Photo'
+        OR document_type = 'Profile'
+        OR document_type = 'PROFILE_PHOTO'
+      );
+    `,
+            [employeeId],
+          );
+        }
+
 
         const result = await client.query(
           `

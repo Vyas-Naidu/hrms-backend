@@ -67,11 +67,52 @@ export class EmployeeController {
       throw error;
     }
   }
+@Put(':id')
+@UseInterceptors(
+  FileFieldsInterceptor(
+    [
+      { name: 'profilePhoto', maxCount: 1 },
+      { name: 'aadhaar', maxCount: 1 },
+      { name: 'pan', maxCount: 1 },
+      { name: 'drivingLicense', maxCount: 1 },
+      { name: 'education', maxCount: 10 },
+      { name: 'experience', maxCount: 10 },
+      { name: 'resume', maxCount: 1 },
+    ],
+    multerMemoryConfig,
+  ),
+)
+update(
+  @Param('id', ParseIntPipe) id: number,
+  @Body('employeeData') employeeData: string,
+  @Body('personalInfo') personalInfo: string,
+  @Body('addresses') addresses: string,
+  @Body('documentsMetadata') documentsMetadata: string,
+  @UploadedFiles() files: EmployeeUploadedFiles,
+) {
+  try {
+    return this.employeeService.update(
+      String(id),
+      {
+        employeeData: employeeData ? JSON.parse(employeeData) : {},
+        personalInfo: personalInfo ? JSON.parse(personalInfo) : {},
+        addresses: addresses ? JSON.parse(addresses) : {},
+        documentsMetadata: documentsMetadata
+          ? JSON.parse(documentsMetadata)
+          : [],
+      },
+      files ?? {},
+    );
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new BadRequestException(
+        'Invalid JSON in multipart form data',
+      );
+    }
 
-  @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() employee: any) {
-    return this.employeeService.update(String(id), employee);
+    throw error;
   }
+}
 
   @Delete(':id')
   remove(@Param('id', ParseIntPipe) id: number) {

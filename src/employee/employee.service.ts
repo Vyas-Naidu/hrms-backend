@@ -27,18 +27,17 @@ export class EmployeeService {
 
   async findAll() {
     const result = await this.dbService.query(`
-    SELECT
-      e.*,
-      d.department_name,
-      dg.designation_name
-    FROM employees e
-    LEFT JOIN departments d
-      ON e.department_id = d.id
-    LEFT JOIN designations dg
-      ON e.designation_id = dg.id
-    WHERE e.status <> 'Inactive'
-    ORDER BY e.id;
-  `);
+  SELECT
+    e.*,
+    d.department_name,
+    dg.designation_name
+  FROM employees e
+  LEFT JOIN departments d
+    ON e.department_id = d.id
+  LEFT JOIN designations dg
+    ON e.designation_id = dg.id
+  ORDER BY e.id;
+`);
 
     return result.rows;
   }
@@ -481,72 +480,129 @@ export class EmployeeService {
   // ===========================
   // UPDATE EMPLOYEE
   // ===========================
+  async update(
+  id: string,
+  payload: any,
+  files: EmployeeUploadedFiles,
+) {
+    const client = await this.dbService.getClient();
 
-  async update(id: string, employee: any) {
-    // First fetch the existing employee.
-    const existingResult = await this.dbService.query(
-      `
+    try {
+      await client.query('BEGIN');
+
+      // ===========================
+      // GET EXISTING EMPLOYEE
+      // ===========================
+
+      const existingResult = await client.query(
+        `
       SELECT *
       FROM employees
       WHERE id = $1;
       `,
-      [id],
-    );
+        [id],
+      );
 
-    if (existingResult.rows.length === 0) {
-      throw new NotFoundException('Employee not found');
-    }
+      if (existingResult.rows.length === 0) {
+        throw new NotFoundException('Employee not found');
+      }
 
-    const existing = existingResult.rows[0];
+      const existing = existingResult.rows[0];
 
-    // Accept both:
-    //
-    // departmentId
-    // department_id
-    //
-    // and the same pattern for other fields.
-    const normalizedEmployee = this.normalizeEmployeeData(employee, existing);
+      // ===========================
+      // SEPARATE DATA
+      // ===========================
 
-    // ---------------------------
-    // Validate department
-    // ---------------------------
+      const employeeData =
+        payload?.employeeData ?? payload ?? {};
 
-    const departmentResult = await this.dbService.query(
-      `
-      SELECT *
+      const personalInfo =
+        payload?.personalInfo ?? {};
+
+      const addresses =
+        payload?.addresses ?? {};
+
+      // ===========================
+      // NORMALIZE EMPLOYEE
+      // ===========================
+
+      const normalizedEmployee =
+        this.normalizeEmployeeData(
+          employeeData,
+          existing,
+        );
+
+      // ===========================
+      // VALIDATE DEPARTMENT
+      // ===========================
+
+      const departmentResult = await client.query(
+        `
+      SELECT id
       FROM departments
       WHERE id = $1;
       `,
-      [normalizedEmployee.departmentId],
-    );
+        [normalizedEmployee.departmentId],
+      );
 
-    if (departmentResult.rows.length === 0) {
-      throw new NotFoundException('Department not found');
-    }
+      if (departmentResult.rows.length === 0) {
+        throw new NotFoundException('Department not found');
+      }
 
-    // ---------------------------
-    // Validate designation
-    // ---------------------------
+      // ===========================
+      // VALIDATE DESIGNATION
+      // ===========================
 
-    const designationResult = await this.dbService.query(
-      `
-      SELECT *
+      const designationResult = await client.query(
+        `
+      SELECT id
       FROM designations
       WHERE id = $1;
       `,
-      [normalizedEmployee.designationId],
-    );
+        [normalizedEmployee.designationId],
+      );
 
-    if (designationResult.rows.length === 0) {
-      throw new NotFoundException('Designation not found');
-    }
+      if (designationResult.rows.length === 0) {
+        throw new NotFoundException('Designation not found');
+      }
 
-    // ---------------------------
-    // Update employee
-    // ---------------------------
+      // ===========================
+      // VALIDATE REPORTING MANAGER
+      // ===========================
 
-    await this.dbService.query(
-      `
+      if (normalizedEmployee.managerId !== null) {
+        const managerResult = await client.query(
+          `
+        SELECT id
+        FROM employees
+        WHERE id = $1;
+        `,
+          [normalizedEmployee.managerId],
+        );
+
+        if (managerResult.rows.length === 0) {
+          throw new NotFoundException(
+            'Reporting Manager not found',
+          );
+        }
+
+        // Employee cannot report to themselves
+        if (
+          String(normalizedEmployee.managerId) ===
+          String(id)
+        ) {
+          throw new BadRequestException(
+            'Employee cannot be their own Reporting Manager',
+          );
+        }
+      }
+
+      // ===========================
+      // UPDATE EMPLOYEE
+      // ===========================
+
+      await client.query(
+        `
       UPDATE employees
       SET
         first_name = $1,
@@ -565,27 +621,216 @@ export class EmployeeService {
         updated_at = CURRENT_TIMESTAMP
       WHERE id = $14;
       `,
+        [
+          normalizedEmployee.firstName,
+          normalizedEmployee.lastName,
+          normalizedEmployee.email,
+          normalizedEmployee.phone,
+          normalizedEmployee.gender,
+          normalizedEmployee.dob,
+          normalizedEmployee.joiningDate,
+          normalizedEmployee.departmentId,
+          normalizedEmployee.designationId,
+          normalizedEmployee.managerId,
+          normalizedEmployee.employmentType,
+          normalizedEmployee.workLocation,
+          normalizedEmployee.status,
+          id,
+        ],
+      );
+
+      // ===========================
+      // UPDATE PERSONAL INFORMATION
+      // ===========================
+
+      const personalExists = await client.query(
+        `
+      SELECT employee_id
+      FROM employee_personal_info
+      WHERE employee_id = $1;
+      `,
+        [id],
+      );
+
+      const personalValues = [
+        personalInfo?.fatherName ?? null,
+        personalInfo?.fatherAadhaarNumber ?? null,
+        personalInfo?.motherName ?? null,
+        personalInfo?.motherAadhaarNumber ?? null,
+        personalInfo?.maritalStatus ?? null,
+        personalInfo?.nationality ?? null,
+        personalInfo?.bloodGroup ?? null,
+        personalInfo?.emergencyContactName ?? null,
+        personalInfo?.emergencyContactNumber ?? null,
+        personalInfo?.emergencyContactRelation ?? null,
+      ];
+
+      if (personalExists.rows.length > 0) {
+        await client.query(
+          `
+        UPDATE employee_personal_info
+        SET
+          father_name = $1,
+          father_aadhaar_number = $2,
+          mother_name = $3,
+          mother_aadhaar_number = $4,
+          marital_status = $5,
+          nationality = $6,
+          blood_group = $7,
+          emergency_contact_name = $8,
+          emergency_contact_number = $9,
+          emergency_contact_relation = $10
+        WHERE employee_id = $11;
+        `,
+          [...personalValues, id],
+        );
+      } else {
+        await client.query(
+          `
+        INSERT INTO employee_personal_info (
+          employee_id,
+          father_name,
+          father_aadhaar_number,
+          mother_name,
+          mother_aadhaar_number,
+          marital_status,
+          nationality,
+          blood_group,
+          emergency_contact_name,
+          emergency_contact_number,
+          emergency_contact_relation
+        )
+        VALUES (
+          $1, $2, $3, $4, $5,
+          $6, $7, $8, $9, $10, $11
+        );
+        `,
+          [id, ...personalValues],
+        );
+      }
+
+      // ===========================
+      // UPDATE ADDRESSES
+      // ===========================
+
+      const permanentAddress =
+        addresses?.permanentAddress;
+
+      const currentAddress =
+        addresses?.currentAddress;
+
+      if (
+        permanentAddress &&
+        typeof permanentAddress === 'object'
+      ) {
+        this.validateAddressFields(
+          permanentAddress,
+          'Permanent address',
+        );
+
+        await this.upsertEmployeeAddress(
+          client,
+          id,
+          'Permanent',
+          permanentAddress,
+        );
+      }
+
+      if (
+        currentAddress &&
+        typeof currentAddress === 'object'
+      ) {
+        this.validateAddressFields(
+          currentAddress,
+          'Current address',
+        );
+
+        await this.upsertEmployeeAddress(
+          client,
+          id,
+          'Current',
+          currentAddress,
+        );
+      }
+// ===========================
+// UPDATE DOCUMENTS
+// ===========================
+
+const documents = payload?.documentsMetadata ?? [];
+
+if (documents.length > 0) {
+  validateDocumentMetadata(documents);
+  validateSingleDocumentDuplicates(documents);
+
+  const matchedFiles = matchDocumentFiles(
+    documents,
+    files ?? {},
+  );
+
+  for (const { document, file } of matchedFiles) {
+
+    // No new file selected
+    // Keep existing file
+    if (!file) {
+      continue;
+    }
+
+    // New file selected
+    validateUploadedFile(
+      file,
+      document.documentKey,
+    );
+
+    const definition =
+      DOCUMENT_DEFINITIONS[
+        document.documentKey as DocumentKey
+      ];
+
+    // Remove old document
+    await client.query(
+      `
+      DELETE FROM employee_documents
+      WHERE employee_id = $1
+        AND document_name = $2
+        AND document_type = $3;
+      `,
       [
-        normalizedEmployee.firstName,
-        normalizedEmployee.lastName,
-        normalizedEmployee.email,
-        normalizedEmployee.phone,
-        normalizedEmployee.gender,
-        normalizedEmployee.dob,
-        normalizedEmployee.joiningDate,
-        normalizedEmployee.departmentId,
-        normalizedEmployee.designationId,
-        normalizedEmployee.managerId,
-        normalizedEmployee.employmentType,
-        normalizedEmployee.workLocation,
-        normalizedEmployee.status,
         id,
+        definition.name,
+        definition.type,
       ],
     );
 
-    // Return the same relationship information that GET returns.
-    const updatedResult = await this.dbService.query(
+    // Save new file
+    await client.query(
       `
+      INSERT INTO employee_documents (
+        employee_id,
+        document_name,
+        document_type,
+        original_file_name,
+        mime_type,
+        file_data
+      )
+      VALUES ($1, $2, $3, $4, $5, $6);
+      `,
+      [
+        id,
+        definition.name,
+        definition.type,
+        file.originalname,
+        file.mimetype,
+        file.buffer,
+      ],
+    );
+  }
+}
+      // ===========================
+      // GET UPDATED EMPLOYEE
+      // ===========================
+
+      const updatedResult = await client.query(
+        `
       SELECT
         e.*,
         d.department_name,
@@ -597,11 +842,143 @@ export class EmployeeService {
         ON e.designation_id = dg.id
       WHERE e.id = $1;
       `,
-      [id],
+        [id],
+      );
+
+      const personalResult = await client.query(
+        `
+      SELECT
+        father_name,
+        father_aadhaar_number,
+        mother_name,
+        mother_aadhaar_number,
+        marital_status,
+        nationality,
+        blood_group,
+        emergency_contact_name,
+        emergency_contact_number,
+        emergency_contact_relation
+      FROM employee_personal_info
+      WHERE employee_id = $1;
+      `,
+        [id],
+      );
+
+      const addressResult = await client.query(
+        `
+      SELECT
+        id,
+        address_type,
+        house_no,
+        street,
+        city,
+        state,
+        pincode,
+        country
+      FROM employee_addresses
+      WHERE employee_id = $1
+      ORDER BY id;
+      `,
+        [id],
+      );
+
+      await client.query('COMMIT');
+
+      return {
+        message: 'Employee updated successfully',
+        employee: {
+          ...updatedResult.rows[0],
+          personal_info:
+            personalResult.rows[0] ?? null,
+          addresses:
+            addressResult.rows,
+        },
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  // ===========================
+  // UPSERT EMPLOYEE ADDRESS
+  // ===========================
+
+  private async upsertEmployeeAddress(
+    client: PoolClient,
+    employeeId: string,
+    addressType: 'Current' | 'Permanent',
+    address: any,
+  ) {
+    const existingResult = await client.query(
+      `
+    SELECT id
+    FROM employee_addresses
+    WHERE employee_id = $1
+      AND LOWER(address_type) = LOWER($2)
+    LIMIT 1;
+    `,
+      [employeeId, addressType],
     );
 
-    return updatedResult.rows[0];
+    if (existingResult.rows.length > 0) {
+
+      // UPDATE existing address
+      await client.query(
+        `
+      UPDATE employee_addresses
+      SET
+        house_no = $1,
+        street = $2,
+        city = $3,
+        state = $4,
+        pincode = $5,
+        country = $6
+      WHERE id = $7;
+      `,
+        [
+          address.houseNo,
+          address.street,
+          address.city,
+          address.state,
+          address.pincode,
+          address.country,
+          existingResult.rows[0].id,
+        ],
+      );
+
+    } else {
+
+      // INSERT new address
+      await client.query(
+        `
+      INSERT INTO employee_addresses (
+        employee_id,
+        address_type,
+        house_no,
+        street,
+        city,
+        state,
+        pincode,
+        country
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+      `,
+        [
+          employeeId,
+          addressType,
+          address.houseNo,
+          address.street,
+          address.city,
+          address.state,
+          address.pincode,
+          address.country,
+        ],
+      );
+    }
   }
+
 
   // ===========================
   // DELETE EMPLOYEE
@@ -634,6 +1011,29 @@ export class EmployeeService {
   // ===========================
   // NORMALIZE EMPLOYEE DATA
   // ===========================
+  // ===========================
+// MANAGER ID NORMALIZATION
+// ===========================
+
+private normalizeManagerId(value: unknown): number | null {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ''
+  ) {
+    return null;
+  }
+
+  const managerId = Number(value);
+
+  if (Number.isNaN(managerId)) {
+    throw new BadRequestException(
+      'Invalid Reporting Manager',
+    );
+  }
+
+  return managerId;
+}
 
   private normalizeEmployeeData(employee: any, existing: any = {}) {
     const source = employee ?? {};
@@ -662,10 +1062,12 @@ export class EmployeeService {
         source.designationId ??
         source.designation_id ??
         existing.designation_id,
-
-      managerId:
-        source.managerId ?? source.manager_id ?? existing.manager_id ?? null,
-
+      managerId: this.normalizeManagerId(
+        source.managerId ??
+        source.manager_id ??
+        existing.manager_id ??
+        null,
+      ),
       employmentType:
         source.employmentType ??
         source.employment_type ??
