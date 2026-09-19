@@ -8,7 +8,7 @@ import { DbService } from '../db/db.service';
 
 @Injectable()
 export class DepartmentService {
-  constructor(private readonly dbService: DbService) { }
+  constructor(private readonly dbService: DbService) {}
 
   // CREATE
   async create(department: any) {
@@ -21,9 +21,7 @@ export class DepartmentService {
     )?.trim();
 
     const designations = Array.isArray(department?.designations)
-      ? department.designations
-        .map((name: any) => name?.trim())
-        .filter(Boolean)
+      ? department.designations.map((name: any) => name?.trim()).filter(Boolean)
       : [];
 
     if (!departmentName) {
@@ -53,11 +51,7 @@ export class DepartmentService {
       );
 
       if (codeResult.rows.length > 0) {
-
-
-        throw new ConflictException(
-          'Department code already exists',
-        );
+        throw new ConflictException('Department code already exists');
       }
 
       // ==========================================
@@ -75,9 +69,7 @@ export class DepartmentService {
       );
 
       if (nameResult.rows.length > 0) {
-        throw new ConflictException(
-          'Department name already exists',
-        );
+        throw new ConflictException('Department name already exists');
       }
 
       // ==========================================
@@ -127,7 +119,6 @@ export class DepartmentService {
         department: departmentRow,
         designations: createdDesignations,
       };
-
     } catch (error: any) {
       await client.query('ROLLBACK');
 
@@ -139,41 +130,24 @@ export class DepartmentService {
 
       // PostgreSQL duplicate constraint
       if (error?.code === '23505') {
-
-        if (
-          error?.constraint ===
-          'departments_department_code_key'
-        ) {
-          throw new ConflictException(
-            'Department code already exists',
-          );
+        if (error?.constraint === 'departments_department_code_key') {
+          throw new ConflictException('Department code already exists');
         }
 
-        if (
-          error?.constraint ===
-          'departments_department_name_key'
-        ) {
-          throw new ConflictException(
-            'Department name already exists',
-          );
+        if (error?.constraint === 'departments_department_name_key') {
+          throw new ConflictException('Department name already exists');
         }
 
-        if (
-          error?.constraint ===
-          'unique_department_designation'
-        ) {
+        if (error?.constraint === 'unique_department_designation') {
           throw new ConflictException(
             'Designation already exists in this department',
           );
         }
 
-        throw new ConflictException(
-          'Department already exists',
-        );
+        throw new ConflictException('Department already exists');
       }
 
       throw error;
-
     } finally {
       client.release();
     }
@@ -214,13 +188,11 @@ export class DepartmentService {
   async update(id: string, department: any) {
     const departmentName = (
       department?.departmentName ?? department?.department_name
-    )
-      ?.trim();
+    )?.trim();
 
     const departmentCode = (
       department?.departmentCode ?? department?.department_code
-    )
-      ?.trim();
+    )?.trim();
 
     if (!departmentName) {
       throw new BadRequestException('Department name is required');
@@ -243,9 +215,7 @@ export class DepartmentService {
     );
 
     if (existingCode.rows.length > 0) {
-      throw new ConflictException(
-        'Department code already exists',
-      );
+      throw new ConflictException('Department code already exists');
     }
 
     // Check duplicate department name
@@ -261,9 +231,7 @@ export class DepartmentService {
     );
 
     if (existingName.rows.length > 0) {
-      throw new ConflictException(
-        'Department name already exists',
-      );
+      throw new ConflictException('Department name already exists');
     }
 
     try {
@@ -281,9 +249,7 @@ export class DepartmentService {
       );
 
       if (result.rows.length === 0) {
-        throw new NotFoundException(
-          'Department not found',
-        );
+        throw new NotFoundException('Department not found');
       }
 
       return result.rows[0];
@@ -297,165 +263,154 @@ export class DepartmentService {
       }
 
       if (error?.code === '23505') {
-        if (
-          error?.constraint ===
-          'departments_department_code_key'
-        ) {
-          throw new ConflictException(
-            'Department code already exists',
-          );
+        if (error?.constraint === 'departments_department_code_key') {
+          throw new ConflictException('Department code already exists');
         }
 
-        throw new ConflictException(
-          'Department name already exists',
-        );
+        throw new ConflictException('Department name already exists');
       }
 
       throw error;
     }
   }
   // DELETE
-async remove(id: string) {
-  const client = await this.dbService.getClient();
+  async remove(id: string) {
+    const client = await this.dbService.getClient();
 
-  try {
-    await client.query('BEGIN');
+    try {
+      await client.query('BEGIN');
 
-    // ==========================================
-    // CHECK DEPARTMENT EXISTS
-    // ==========================================
+      // ==========================================
+      // CHECK DEPARTMENT EXISTS
+      // ==========================================
 
-    const departmentResult = await client.query(
-      `
+      const departmentResult = await client.query(
+        `
       SELECT id
       FROM departments
       WHERE id = $1;
       `,
-      [id],
-    );
+        [id],
+      );
 
-    if (departmentResult.rows.length === 0) {
-      throw new NotFoundException('Department not found');
-    }
+      if (departmentResult.rows.length === 0) {
+        throw new NotFoundException('Department not found');
+      }
 
-    // ==========================================
-    // CHECK EMPLOYEES
-    // ==========================================
+      // ==========================================
+      // CHECK EMPLOYEES
+      // ==========================================
 
-    const employeeCheck = await client.query(
-      `
+      const employeeCheck = await client.query(
+        `
       SELECT id
       FROM employees
       WHERE department_id = $1
       LIMIT 1;
       `,
-      [id],
-    );
-
-    if (employeeCheck.rows.length > 0) {
-      throw new ConflictException(
-        'Cannot delete department because employees are assigned to it',
+        [id],
       );
-    }
 
-    // ==========================================
-    // FIND DESIGNATIONS
-    // ==========================================
+      if (employeeCheck.rows.length > 0) {
+        throw new ConflictException(
+          'Cannot delete department because employees are assigned to it',
+        );
+      }
 
-    const designationResult = await client.query(
-      `
+      // ==========================================
+      // FIND DESIGNATIONS
+      // ==========================================
+
+      const designationResult = await client.query(
+        `
       SELECT id
       FROM designations
       WHERE department_id = $1;
       `,
-      [id],
-    );
+        [id],
+      );
 
-    const designationIds = designationResult.rows.map(
-      (row) => row.id,
-    );
+      const designationIds = designationResult.rows.map((row) => row.id);
 
-    // ==========================================
-    // CHECK IF DESIGNATIONS ARE USED BY EMPLOYEES
-    // ==========================================
+      // ==========================================
+      // CHECK IF DESIGNATIONS ARE USED BY EMPLOYEES
+      // ==========================================
 
-    if (designationIds.length > 0) {
-      const designationEmployeeCheck = await client.query(
-        `
+      if (designationIds.length > 0) {
+        const designationEmployeeCheck = await client.query(
+          `
         SELECT id
         FROM employees
         WHERE designation_id = ANY($1::int[])
         LIMIT 1;
         `,
-        [designationIds],
-      );
-
-      if (designationEmployeeCheck.rows.length > 0) {
-        throw new ConflictException(
-          'Cannot delete department because its designations are assigned to employees',
+          [designationIds],
         );
+
+        if (designationEmployeeCheck.rows.length > 0) {
+          throw new ConflictException(
+            'Cannot delete department because its designations are assigned to employees',
+          );
+        }
       }
-    }
 
-    // ==========================================
-    // DELETE DESIGNATIONS
-    // ==========================================
+      // ==========================================
+      // DELETE DESIGNATIONS
+      // ==========================================
 
-    if (designationIds.length > 0) {
-      await client.query(
-        `
+      if (designationIds.length > 0) {
+        await client.query(
+          `
         DELETE FROM designations
         WHERE department_id = $1;
         `,
-        [id],
-      );
-    }
+          [id],
+        );
+      }
 
-    // ==========================================
-    // DELETE DEPARTMENT
-    // ==========================================
+      // ==========================================
+      // DELETE DEPARTMENT
+      // ==========================================
 
-    const result = await client.query(
-      `
+      const result = await client.query(
+        `
       DELETE FROM departments
       WHERE id = $1
       RETURNING *;
       `,
-      [id],
-    );
-
-    if (result.rows.length === 0) {
-      throw new NotFoundException('Department not found');
-    }
-
-    await client.query('COMMIT');
-
-    return {
-      message: 'Department deleted successfully',
-      department: result.rows[0],
-    };
-
-  } catch (error: any) {
-    await client.query('ROLLBACK');
-
-    if (
-      error instanceof ConflictException ||
-      error instanceof NotFoundException
-    ) {
-      throw error;
-    }
-
-    // PostgreSQL foreign-key error
-    if (error?.code === '23503') {
-      throw new ConflictException(
-        'Cannot delete department because it is being used by another record',
+        [id],
       );
+
+      if (result.rows.length === 0) {
+        throw new NotFoundException('Department not found');
+      }
+
+      await client.query('COMMIT');
+
+      return {
+        message: 'Department deleted successfully',
+        department: result.rows[0],
+      };
+    } catch (error: any) {
+      await client.query('ROLLBACK');
+
+      if (
+        error instanceof ConflictException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
+
+      // PostgreSQL foreign-key error
+      if (error?.code === '23503') {
+        throw new ConflictException(
+          'Cannot delete department because it is being used by another record',
+        );
+      }
+
+      throw error;
+    } finally {
+      client.release();
     }
-
-    throw error;
-
-  } finally {
-    client.release();
   }
-}
 }
