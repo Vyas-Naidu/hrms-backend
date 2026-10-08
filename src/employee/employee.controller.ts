@@ -21,9 +21,10 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/roles.enum';
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('employees')
 export class EmployeeController {
-  constructor(private readonly employeeService: EmployeeService) { }
+  constructor(private readonly employeeService: EmployeeService) {}
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.HR)

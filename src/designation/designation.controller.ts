@@ -6,10 +6,17 @@ import {
   Param,
   Post,
   Put,
+  UseGuards,
 } from '@nestjs/common';
 
 import { DesignationService } from './designation.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { Role } from '../auth/roles.enum';
 
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(Role.ADMIN, Role.HR)
 @Controller('designations')
 export class DesignationController {
   constructor(
@@ -31,7 +38,6 @@ export class DesignationController {
     return this.designationService.findOne(id);
   }
 
-  // PUT
   @Put(':id')
   update(
     @Param('id') id: string,
