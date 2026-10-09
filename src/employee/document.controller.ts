@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  NotFoundException,
   Body,
   Controller,
   Delete,
@@ -17,10 +18,12 @@ import type { Response } from 'express';
 import { multerMemoryConfig } from '../common/multer.config';
 import type { EmployeeUploadedFiles } from '../common/document-upload';
 import { DocumentService } from './document.service';
+import { Request, UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller()
 export class DocumentController {
-  constructor(private readonly documentService: DocumentService) {}
+  constructor(private readonly documentService: DocumentService) { }
 
   @Post('employees/:employeeId/documents')
   @UseInterceptors(
@@ -78,6 +81,36 @@ export class DocumentController {
     });
 
     response.send(document.fileData);
+  }
+  @UseGuards(JwtAuthGuard)
+  @Get('employees/me/photo')
+  async getMyProfilePhoto(
+    @Request() request: {
+      user: { employeeId: number };
+    },
+    @Res() response: Response,
+  ) {
+    try {
+      const photo = await this.documentService.getMyProfilePhoto(
+        request.user.employeeId,
+      );
+
+      response.set({
+        'Content-Type': photo.mimeType,
+        'Cache-Control': 'private, no-store',
+        'X-Content-Type-Options': 'nosniff',
+      });
+
+      response.send(photo.fileData);
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        return response.status(404).json({
+          message: 'Profile photo not found',
+        });
+      }
+
+      throw error;
+    }
   }
 
   @Put('documents/:id')

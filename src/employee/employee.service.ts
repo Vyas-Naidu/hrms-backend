@@ -2,7 +2,9 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
+import { Role } from '../auth/roles.enum';
 import { DbService } from '../db/db.service';
 import { PoolClient } from 'pg';
 import {
@@ -26,9 +28,21 @@ export class EmployeeService {
   // ===========================
 
   async findAll() {
-    const result = await this.dbService.query(`
+const result = await this.dbService.query(`
   SELECT
-    e.*,
+    e.id,
+    e.employee_code,
+    e.first_name,
+    e.last_name,
+    e.email,
+    e.phone,
+    e.department_id,
+    e.designation_id,
+    e.manager_id,
+    e.employment_type,
+    e.work_location,
+    e.status,
+    e.joining_date,
     d.department_name,
     dg.designation_name
   FROM employees e
@@ -36,6 +50,7 @@ export class EmployeeService {
     ON e.department_id = d.id
   LEFT JOIN designations dg
     ON e.designation_id = dg.id
+  WHERE e.deleted_at IS NULL
   ORDER BY e.id;
 `);
 
@@ -45,7 +60,16 @@ export class EmployeeService {
   // GET EMPLOYEE BY ID
   // ===========================
 
-  async findOne(id: string) {
+  async findOne(id: string, user: { employeeId: number; role: Role },
+  ) {
+    if (
+      user.role === Role.EMPLOYEE &&
+      String(user.employeeId) !== id
+    ) {
+      throw new ForbiddenException(
+        'You do not have permission to access this employee',
+      );
+    }
     const employeeResult = await this.dbService.query(
       `
     SELECT
@@ -72,9 +96,7 @@ export class EmployeeService {
       `
     SELECT
       father_name,
-      father_aadhaar_number,
       mother_name,
-      mother_aadhaar_number,
       marital_status,
       nationality,
       blood_group,
@@ -110,6 +132,45 @@ export class EmployeeService {
       personal_info: personalResult.rows[0] ?? null,
       addresses: addressResult.rows,
     };
+  }
+  // ===========================
+  // GET MY OWN PROFILE
+  // ===========================
+
+  async findMyProfile(employeeId: number) {
+    const result = await this.dbService.query(
+      `
+      SELECT
+        e.id,
+        e.employee_code,
+        e.first_name,
+        e.last_name,
+        e.email,
+        e.phone,
+        e.gender,
+        e.dob,
+        e.joining_date,
+        e.employment_type,
+        e.status,
+        e.work_location,
+        d.department_name,
+        dg.designation_name
+      FROM employees e
+      LEFT JOIN departments d
+        ON e.department_id = d.id
+      LEFT JOIN designations dg
+        ON e.designation_id = dg.id
+      WHERE e.id = $1
+        AND e.deleted_at IS NULL;
+      `,
+      [employeeId],
+    );
+
+    if (result.rows.length === 0) {
+      throw new NotFoundException('Employee profile not found');
+    }
+
+    return result.rows[0];
   }
 
   // ===========================
@@ -481,10 +542,10 @@ export class EmployeeService {
   // UPDATE EMPLOYEE
   // ===========================
   async update(
-  id: string,
-  payload: any,
-  files: EmployeeUploadedFiles,
-) {
+    id: string,
+    payload: any,
+    files: EmployeeUploadedFiles,
+  ) {
     const client = await this.dbService.getClient();
 
     try {
@@ -643,27 +704,37 @@ export class EmployeeService {
       // UPDATE PERSONAL INFORMATION
       // ===========================
 
+
       const personalExists = await client.query(
         `
-      SELECT employee_id
-      FROM employee_personal_info
-      WHERE employee_id = $1;
-      `,
+  SELECT *
+  FROM employee_personal_info
+  WHERE employee_id = $1;
+  `,
         [id],
       );
 
+      const existingPersonal = personalExists.rows[0] ?? {};
+
       const personalValues = [
-        personalInfo?.fatherName ?? null,
-        personalInfo?.fatherAadhaarNumber ?? null,
-        personalInfo?.motherName ?? null,
-        personalInfo?.motherAadhaarNumber ?? null,
-        personalInfo?.maritalStatus ?? null,
-        personalInfo?.nationality ?? null,
-        personalInfo?.bloodGroup ?? null,
-        personalInfo?.emergencyContactName ?? null,
-        personalInfo?.emergencyContactNumber ?? null,
-        personalInfo?.emergencyContactRelation ?? null,
+        personalInfo.fatherName ?? existingPersonal.father_name ?? null,
+        personalInfo.fatherAadhaarNumber ??
+        existingPersonal.father_aadhaar_number ?? null,
+        personalInfo.motherName ?? existingPersonal.mother_name ?? null,
+        personalInfo.motherAadhaarNumber ??
+        existingPersonal.mother_aadhaar_number ?? null,
+        personalInfo.maritalStatus ??
+        existingPersonal.marital_status ?? null,
+        personalInfo.nationality ?? existingPersonal.nationality ?? null,
+        personalInfo.bloodGroup ?? existingPersonal.blood_group ?? null,
+        personalInfo.emergencyContactName ??
+        existingPersonal.emergency_contact_name ?? null,
+        personalInfo.emergencyContactNumber ??
+        existingPersonal.emergency_contact_number ?? null,
+        personalInfo.emergencyContactRelation ??
+        existingPersonal.emergency_contact_relation ?? null,
       ];
+
 
       if (personalExists.rows.length > 0) {
         await client.query(
@@ -752,58 +823,58 @@ export class EmployeeService {
           currentAddress,
         );
       }
-// ===========================
-// UPDATE DOCUMENTS
-// ===========================
+      // ===========================
+      // UPDATE DOCUMENTS
+      // ===========================
 
-const documents = payload?.documentsMetadata ?? [];
+      const documents = payload?.documentsMetadata ?? [];
 
-if (documents.length > 0) {
-  validateDocumentMetadata(documents);
-  validateSingleDocumentDuplicates(documents);
+      if (documents.length > 0) {
+        validateDocumentMetadata(documents);
+        validateSingleDocumentDuplicates(documents);
 
-  const matchedFiles = matchDocumentFiles(
-    documents,
-    files ?? {},
-  );
+        const matchedFiles = matchDocumentFiles(
+          documents,
+          files ?? {},
+        );
 
-  for (const { document, file } of matchedFiles) {
+        for (const { document, file } of matchedFiles) {
 
-    // No new file selected
-    // Keep existing file
-    if (!file) {
-      continue;
-    }
+          // No new file selected
+          // Keep existing file
+          if (!file) {
+            continue;
+          }
 
-    // New file selected
-    validateUploadedFile(
-      file,
-      document.documentKey,
-    );
+          // New file selected
+          validateUploadedFile(
+            file,
+            document.documentKey,
+          );
 
-    const definition =
-      DOCUMENT_DEFINITIONS[
-        document.documentKey as DocumentKey
-      ];
+          const definition =
+            DOCUMENT_DEFINITIONS[
+            document.documentKey as DocumentKey
+            ];
 
-    // Remove old document
-    await client.query(
-      `
+          // Remove old document
+          await client.query(
+            `
       DELETE FROM employee_documents
       WHERE employee_id = $1
         AND document_name = $2
         AND document_type = $3;
       `,
-      [
-        id,
-        definition.name,
-        definition.type,
-      ],
-    );
+            [
+              id,
+              definition.name,
+              definition.type,
+            ],
+          );
 
-    // Save new file
-    await client.query(
-      `
+          // Save new file
+          await client.query(
+            `
       INSERT INTO employee_documents (
         employee_id,
         document_name,
@@ -814,17 +885,17 @@ if (documents.length > 0) {
       )
       VALUES ($1, $2, $3, $4, $5, $6);
       `,
-      [
-        id,
-        definition.name,
-        definition.type,
-        file.originalname,
-        file.mimetype,
-        file.buffer,
-      ],
-    );
-  }
-}
+            [
+              id,
+              definition.name,
+              definition.type,
+              file.originalname,
+              file.mimetype,
+              file.buffer,
+            ],
+          );
+        }
+      }
       // ===========================
       // GET UPDATED EMPLOYEE
       // ===========================
@@ -1012,28 +1083,28 @@ if (documents.length > 0) {
   // NORMALIZE EMPLOYEE DATA
   // ===========================
   // ===========================
-// MANAGER ID NORMALIZATION
-// ===========================
+  // MANAGER ID NORMALIZATION
+  // ===========================
 
-private normalizeManagerId(value: unknown): number | null {
-  if (
-    value === null ||
-    value === undefined ||
-    value === ''
-  ) {
-    return null;
+  private normalizeManagerId(value: unknown): number | null {
+    if (
+      value === null ||
+      value === undefined ||
+      value === ''
+    ) {
+      return null;
+    }
+
+    const managerId = Number(value);
+
+    if (Number.isNaN(managerId)) {
+      throw new BadRequestException(
+        'Invalid Reporting Manager',
+      );
+    }
+
+    return managerId;
   }
-
-  const managerId = Number(value);
-
-  if (Number.isNaN(managerId)) {
-    throw new BadRequestException(
-      'Invalid Reporting Manager',
-    );
-  }
-
-  return managerId;
-}
 
   private normalizeEmployeeData(employee: any, existing: any = {}) {
     const source = employee ?? {};

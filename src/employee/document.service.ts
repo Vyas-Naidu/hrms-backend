@@ -157,6 +157,32 @@ export class DocumentService {
     }));
   }
 
+  async getMyProfilePhoto(employeeId: number) {
+    const result = await this.dbService.query(
+      `
+    SELECT mime_type, file_data
+    FROM employee_documents
+    WHERE employee_id = $1
+      AND (
+        document_name = 'Profile Photo'
+        OR document_type = 'Profile'
+        OR document_type = 'PROFILE_PHOTO'
+      )
+    ORDER BY uploaded_at DESC, id DESC
+    LIMIT 1;
+    `,
+      [employeeId],
+    );
+
+    if (result.rows.length === 0) {
+      throw new NotFoundException('Profile photo not found');
+    }
+
+    return {
+      mimeType: result.rows[0].mime_type,
+      fileData: result.rows[0].file_data,
+    };
+  }
   async getDocument(documentId: number) {
     const result = await this.dbService.query(
       `

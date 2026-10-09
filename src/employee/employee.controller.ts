@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Request,
   Body,
   Controller,
   Delete,
@@ -8,6 +9,7 @@ import {
   ParseIntPipe,
   Post,
   Put,
+  UseGuards,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
@@ -16,7 +18,7 @@ import { EmployeeService } from './employee.service';
 import { multerMemoryConfig } from '../common/multer.config';
 import type { EmployeeUploadedFiles } from '../common/document-upload';
 
-import { UseGuards } from '@nestjs/common';
+
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -24,20 +26,38 @@ import { Role } from '../auth/roles.enum';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('employees')
 export class EmployeeController {
-  constructor(private readonly employeeService: EmployeeService) {}
+  constructor(private readonly employeeService: EmployeeService) { }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.HR)
   @Get()
   findAll() {
     return this.employeeService.findAll();
   }
-
+  @Get('me')
+  findMyProfile(
+    @Request() request: {
+      user: { employeeId: number; role: Role };
+    },
+  ) {
+    return this.employeeService.findMyProfile(
+      request.user.employeeId,
+    );
+  }
+  @Roles(Role.ADMIN, Role.HR)
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.employeeService.findOne(String(id));
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() request: {
+      user: { employeeId: number; role: Role };
+    },
+  ) {
+    return this.employeeService.findOne(
+      String(id),
+      request.user,
+    );
   }
 
+  @Roles(Role.ADMIN, Role.HR)
   @Post()
   @UseInterceptors(
     FileFieldsInterceptor(
@@ -75,6 +95,7 @@ export class EmployeeController {
       throw error;
     }
   }
+  @Roles(Role.ADMIN, Role.HR)
   @Put(':id')
   @UseInterceptors(
     FileFieldsInterceptor(
@@ -121,7 +142,7 @@ export class EmployeeController {
       throw error;
     }
   }
-
+  @Roles(Role.ADMIN, Role.HR)
   @Delete(':id')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.employeeService.remove(String(id));
