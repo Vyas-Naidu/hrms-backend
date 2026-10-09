@@ -20,11 +20,7 @@ import type { EmployeeUploadedFiles } from '../common/document-upload';
 import { DocumentService } from './document.service';
 import { Request, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
-import { Role } from '../auth/roles.enum';
 
-@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller()
 export class DocumentController {
   constructor(private readonly documentService: DocumentService) { }
@@ -44,7 +40,6 @@ export class DocumentController {
       multerMemoryConfig,
     ),
   )
-  @Roles(Role.ADMIN, Role.HR)
   upload(
     @Param('employeeId', ParseIntPipe) employeeId: number,
     @Body('documentsMetadata') documentsMetadata: string,
@@ -63,12 +58,12 @@ export class DocumentController {
       throw error;
     }
   }
-  @Roles(Role.ADMIN, Role.HR)
+
   @Get('employees/:employeeId/documents')
   getEmployeeDocuments(@Param('employeeId', ParseIntPipe) employeeId: number) {
     return this.documentService.getEmployeeDocuments(employeeId);
   }
-  @Roles(Role.ADMIN, Role.HR)
+
   @Get('documents/:id')
   async getDocument(
     @Param('id', ParseIntPipe) id: number,
@@ -118,7 +113,6 @@ export class DocumentController {
     }
   }
 
-  @Roles(Role.ADMIN, Role.HR)
   @Put('documents/:id')
   updateDocument(
     @Param('id', ParseIntPipe) id: number,
@@ -130,7 +124,7 @@ export class DocumentController {
   ) {
     return this.documentService.updateDocument(id, documentData);
   }
-  @Roles(Role.ADMIN, Role.HR)
+
   @Delete('documents/:id')
   deleteDocument(@Param('id', ParseIntPipe) id: number) {
     return this.documentService.deleteDocument(id);
